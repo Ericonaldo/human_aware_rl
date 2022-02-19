@@ -127,6 +127,7 @@ def convert_joint_df_trajs_to_overcooked_single(main_trials, layouts, silent=Fal
 
     human_indices = []
     num_trials_for_layout = {}
+    print(main_trials)
     for layout_name in layouts:
         trial_ids = np.unique(main_trials[main_trials['layout_name'] == layout_name]['trial_id'])
         num_trials = len(trial_ids)
@@ -152,6 +153,57 @@ def convert_joint_df_trajs_to_overcooked_single(main_trials, layouts, silent=Fal
         print("Number of trajectories processed for each layout: {}".format(num_trials_for_layout))
     return single_agent_trajectories, human_indices
 
+def convert_joint_df_trajs_to_overcooked_joint(main_trials, layouts, silent=False, **kwargs):
+    """
+    Takes in a dataframe `main_trials` containing joint trajectories, and extract trajectories of workers `worker_ids`
+    on layouts `layouts`, with specific options.
+    """
+
+    single_agent_trajectories = {
+        # With shape (n_episodes, game_len), where game_len might vary across games:
+        "observations": [],
+        "actions": [],
+        "rewards": [],  # Individual reward values
+        "dones": [],  # Individual done values
+        "infos": [],
+
+        # With shape (n_episodes, ):
+        "returns": [],  # Sum of rewards across each episode
+        "lengths": [],  # Lengths of each episode
+        "mdp_params": [],
+        "env_params": [],
+        "metadatas": {"agent_idxs": []}  # Agent index for current episode
+    }
+    joint_agent_trajectories = {}
+
+    human_indices = []
+    num_trials_for_layout = {}
+    print(main_trials)
+    for layout_name in layouts:
+        trial_ids = np.unique(main_trials[main_trials['layout_name'] == layout_name]['trial_id'])
+        num_trials = len(trial_ids)
+        num_trials_for_layout[layout_name] = num_trials
+
+        if num_trials == 0:
+            print("WARNING: No trajectories found on {} layout!".format(layout_name))
+        
+        for trial_id in trial_ids:
+            # Get an single game
+            one_traj_df = main_trials[main_trials['trial_id'] == trial_id]
+
+            # Get python trajectory data and information on which player(s) was/were human
+            joint_traj_data = df_traj_to_python_joint_traj(one_traj_df, silent=silent,**kwargs)
+
+            human_idx = get_human_player_index_for_df(one_traj_df)
+            human_indices.append(human_idx)
+
+            # Convert joint trajectories to single agent trajectories, appending recovered info to the `trajectories` dict
+            joint_state_trajectory_to_joint(joint_agent_trajectories, single_agent_trajectories, joint_traj_data, human_idx, **kwargs)
+
+    if not silent: 
+        print("Number of trajectories processed for each layout: {}".format(num_trials_for_layout))
+    
+    return joint_agent_trajectories, human_idx
 
 def get_human_player_index_for_df(one_traj_df):
     """Determines which player index had a human player"""
@@ -207,3 +259,49 @@ def joint_state_trajectory_to_single(trajectories, joint_traj_data, player_indic
         trajectories["mdp_params"].append(env.mdp.mdp_params)
         trajectories["env_params"].append({})
         trajectories["metadatas"]["ep_agent_idxs"].append(agent_idx)
+
+
+def joint_state_trajectory_to_joint(joint_trajectories, trajectories, joint_traj_data, player_indices_to_convert=None, featurize_states=True,
+                                     silent=False, **kwargs):
+    """
+    Take a joint trajectory and split it into two single-agent trajectories, adding data to the `trajectories` dictionary
+    player_indices_to_convert: which player indexes' trajs we should return
+    """
+
+    env = joint_traj_data['metadatas']['env'][0]
+
+    assert len(joint_traj_data['ep_states']) == 1, "This method only takes in one trajectory"
+    states, joint_actions = joint_traj_data['ep_states'][0], joint_traj_data['ep_actions'][0]
+    rewards, length = joint_traj_data['ep_rewards'][0], joint_traj_data['ep_lengths'][0]
+
+    # Getting trajectory for each agent
+    for agent_idx in player_indices_to_convert:
+
+        ep_obs, ep_acts, ep_dones = [], [], []
+        for i in range(len(states)):
+            state, action = states[i], joint_actions[i][agent_idx]
+
+            if featurize_states:
+                action = np.array([Action.ACTION_TO_INDEX[action]]).astype(int)
+                state = env.featurize_state_mdp(state)[agent_idx]
+
+            ep_obs.append(state)
+            ep_acts.append(action)
+            ep_dones.append(False)
+
+        ep_dones[-1] = True
+
+        trajectories["observations"].append(np.array(ep_obs))
+        trajectories["actions"].append(np.array(ep_acts))
+        trajectories["rewards"].append(np.array(rewards))
+        trajectories["dones"].append(np.array(ep_dones))
+        trajectories["infos"].append(np.array([{}] * len(rewards)))
+        trajectories["returns"].append(np.array(sum(rewards)))
+        trajectories["lengths"].append(np.array(length))
+        trajectories["mdp_params"].append(env.mdp.mdp_params)
+        trajectories["env_params"].append({})
+        trajectories["metadatas"]["agent_idxs"].append(agent_idx)
+
+        joint_trajectories['agent_{}'.format(agent_idx)] = trajectories
+
+        
