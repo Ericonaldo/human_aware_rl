@@ -478,7 +478,8 @@ if __name__ == "__main__":
         try:
             print("try {}...".format(layout))
             data = get_human_human_trajectories_ma([layout], ARGS.mode)[0]
-            with open("human-human_{}.pkl".format(layout, ARGS.mode), "wb") as f:
-                pickle.dump(data, f)
+            import pickle as pkl
+            with open("human-human_{}_{}.pkl".format(layout, ARGS.mode), "wb") as f:
+                pkl.dump(data, f)
         except:
             pass
