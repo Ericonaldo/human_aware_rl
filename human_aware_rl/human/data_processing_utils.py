@@ -159,22 +159,7 @@ def convert_joint_df_trajs_to_overcooked_joint(main_trials, layouts, silent=Fals
     on layouts `layouts`, with specific options.
     """
 
-    single_agent_trajectories = {
-        # With shape (n_episodes, game_len), where game_len might vary across games:
-        "observations": [],
-        "actions": [],
-        "rewards": [],  # Individual reward values
-        "dones": [],  # Individual done values
-        "infos": [],
-
-        # With shape (n_episodes, ):
-        "returns": [],  # Sum of rewards across each episode
-        "lengths": [],  # Lengths of each episode
-        "mdp_params": [],
-        "env_params": [],
-        "metadatas": {"agent_idxs": []}  # Agent index for current episode
-    }
-    joint_agent_trajectories = {}
+    ret = []
 
     human_indices = []
     num_trials_for_layout = {}
@@ -197,13 +182,14 @@ def convert_joint_df_trajs_to_overcooked_joint(main_trials, layouts, silent=Fals
             human_idx = get_human_player_index_for_df(one_traj_df)
             human_indices.append(human_idx)
 
-            # Convert joint trajectories to single agent trajectories, appending recovered info to the `trajectories` dict
-            joint_state_trajectory_to_joint(joint_agent_trajectories, single_agent_trajectories, joint_traj_data, human_idx, **kwargs)
+            # Convert joint trajectories to joint agent trajectories
+            joint_agent_trajectories = joint_state_trajectory_to_joint(joint_traj_data, human_idx, **kwargs)
+            ret.append(joint_agent_trajectories)
 
     if not silent: 
         print("Number of trajectories processed for each layout: {}".format(num_trials_for_layout))
     
-    return joint_agent_trajectories, human_idx
+    return ret, human_idx
 
 def get_human_player_index_for_df(one_traj_df):
     """Determines which player index had a human player"""
@@ -261,7 +247,7 @@ def joint_state_trajectory_to_single(trajectories, joint_traj_data, player_indic
         trajectories["metadatas"]["ep_agent_idxs"].append(agent_idx)
 
 
-def joint_state_trajectory_to_joint(joint_trajectories, trajectories, joint_traj_data, player_indices_to_convert=None, featurize_states=True,
+def joint_state_trajectory_to_joint(joint_traj_data, player_indices_to_convert=None, featurize_states=True,
                                      silent=False, **kwargs):
     """
     Take a joint trajectory and split it into two single-agent trajectories, adding data to the `trajectories` dictionary
@@ -269,6 +255,7 @@ def joint_state_trajectory_to_joint(joint_trajectories, trajectories, joint_traj
     """
 
     env = joint_traj_data['metadatas']['env'][0]
+    joint_trajectories = {}
 
     assert len(joint_traj_data['ep_states']) == 1, "This method only takes in one trajectory"
     states, joint_actions = joint_traj_data['ep_states'][0], joint_traj_data['ep_actions'][0]
@@ -276,6 +263,7 @@ def joint_state_trajectory_to_joint(joint_trajectories, trajectories, joint_traj
 
     # Getting trajectory for each agent
     for agent_idx in player_indices_to_convert:
+        trajectories = {}
 
         ep_obs, ep_acts, ep_dones = [], [], []
         for i in range(len(states)):
@@ -291,17 +279,20 @@ def joint_state_trajectory_to_joint(joint_trajectories, trajectories, joint_traj
 
         ep_dones[-1] = True
 
-        trajectories["observations"].append(np.array(ep_obs))
-        trajectories["actions"].append(np.array(ep_acts))
-        trajectories["rewards"].append(np.array(rewards))
-        trajectories["dones"].append(np.array(ep_dones))
-        trajectories["infos"].append(np.array([{}] * len(rewards)))
-        trajectories["returns"].append(np.array(sum(rewards)))
-        trajectories["lengths"].append(np.array(length))
-        trajectories["mdp_params"].append(env.mdp.mdp_params)
-        trajectories["env_params"].append({})
-        trajectories["metadatas"]["agent_idxs"].append(agent_idx)
+        trajectories["observations"] = np.array(ep_obs[:-1])
+        trajectories["next_observations"] = np.array(ep_obs[1:])
+        trajectories["actions"] = np.array(ep_acts[:-1])
+        trajectories["rewards"] = np.array(rewards[0:])
+        trajectories["terminals"] = np.array(ep_dones[1:])
+        trajectories["agent_infos"] = np.array([{}] *(len(rewards)-1))
+        trajectories["env_infos"] = np.array([{}] * (len(rewards)-1))
+        trajectories["returns"] = np.array(sum(rewards))
+        trajectories["lengths"] = np.array(length)
+        trajectories["mdp_params"] = env.mdp.mdp_params
+        trajectories["env_params"] = {}
+        trajectories["metadatas"] = {}
+        trajectories["metadatas"]["agent_idxs"] = agent_idx
 
         joint_trajectories['agent_{}'.format(agent_idx)] = trajectories
 
-        
+    return joint_trajectories 

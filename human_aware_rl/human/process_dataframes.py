@@ -481,5 +481,6 @@ if __name__ == "__main__":
             import pickle as pkl
             with open("human-human_{}_{}.pkl".format(layout, ARGS.mode), "wb") as f:
                 pkl.dump(data, f)
-        except:
+        except Exception as e:
+            print("error", e)
             pass
